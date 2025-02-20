@@ -1,0 +1,91 @@
+import socket
+import sys
+import threading
+from queue import Queue
+
+# Number of threads to use for scanning ports
+NUM_THREADS = 50
+
+def scan_port(addr, port, q):
+    '''Scan a specific port on the target address'''
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(1)  # Set a 1 second timeout for the connection attempt
+        result = sock.connect_ex((addr, port))
+        sock.close()
+
+        if result == 0:
+            service = socket.getservbyport(port, 'tcp') if port < 1024 else "Unknown Service"
+            print(f"Port {port} is OPEN on {addr} ({service})")
+            q.put(port)  # Add open port to queue
+        else:
+            pass
+    except socket.error:
+        pass
+
+def scan_ports(addr, start_port, end_port, q):
+    '''Scan a range of ports on the given address'''
+    print(f"Scanning ports {start_port} to {end_port} on {addr}...")
+    for port in range(start_port, end_port + 1):
+        # Start scanning in separate threads
+        thread = threading.Thread(target=scan_port, args=(addr, port, q))
+        thread.start()
+
+def get_open_ports(addr, start_port, end_port):
+    '''Scan and collect open ports from the target address'''
+    open_ports = []
+    q = Queue()
+    scan_ports(addr, start_port, end_port, q)
+    
+    # Collect results from queue
+    for thread in threading.enumerate():
+        if thread is not threading.current_thread():
+            thread.join()
+    
+    # Collect open ports from the queue
+    while not q.empty():
+        open_ports.append(q.get())
+    
+    return open_ports
+
+def banner_grabbing(addr, open_ports):
+    '''Grabbing banners for open ports'''
+    for port in open_ports:
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(2)
+            sock.connect((addr, port))
+            sock.send(b'Hello\r\n')
+            banner = sock.recv(1024).decode().strip()
+            sock.close()
+
+            if banner:
+                print(f"Banner for port {port}: {banner}")
+            else:
+                print(f"No banner available for port {port}")
+        except socket.error:
+            print(f"Unable to grab banner from port {port}")
+
+def main():
+    if len(sys.argv) != 4:
+        print("Usage: python portscanner.py <ipaddress> <start_port> <end_port>")
+        sys.exit(1)
+
+    addr = sys.argv[1]
+    start_port = int(sys.argv[2])
+    end_port = int(sys.argv[3])
+
+    print(f"Starting port scan on {addr} from port {start_port} to {end_port}...\n")
+    
+    # Get open ports
+    open_ports = get_open_ports(addr, start_port, end_port)
+
+    if open_ports:
+        print(f"\nOpen ports on {addr}: {open_ports}")
+        # Grab banners for open ports
+        banner_grabbing(addr, open_ports)
+    else:
+        print(f"\nNo open ports found between {start_port} and {end_port} on {addr}.")
+
+if __name__ == "__main__":
+    main()
